@@ -1,9 +1,10 @@
 # tailscale-wol-relay
 
+*A tiny Windows/Tailscale relay for waking a sleeping PC from outside your home network.*
+
 `tailscale-wol-relay` is a small, dependency-free PowerShell Wake-on-LAN relay for Windows.
 
 It lets a remote device wake a sleeping PC by calling an HTTP endpoint on an always-on Windows machine that is already inside the same LAN:
-
 ```text
 Remote device -> Tailscale -> always-on Windows relay -> LAN Wake-on-LAN broadcast -> sleeping PC
 ```
