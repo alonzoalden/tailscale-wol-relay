@@ -135,6 +135,8 @@ powershell.exe -ExecutionPolicy Bypass -File <path-to-wake-server.ps1>
 
 Admin permissions are usually not required for this current-user logon task. You may need admin permissions if you are replacing a task created by another user, changing machine-wide policy, adding the HTTP URL reservation, or opening the Windows firewall.
 
+The task uses the ScheduledTasks `Limited` run level for the normal current-user install path. The relay may still need the one-time URL ACL setup if Windows does not allow the user account to bind `http://+:8787/`.
+
 Uninstall the task:
 
 ```powershell
@@ -147,6 +149,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\uninstall-startup-task.ps
 - Do not use the Tailscale IP for `TARGET_IP`; it must be the target device's LAN IP if you set it.
 - Do not assume `x.x.x.255` is the correct broadcast address. `/status` shows the calculated broadcast for each detected LAN interface.
 - If `/status` works over Tailscale but `/wake` fails, the relay HTTP path is working and the remaining issue is local WOL delivery.
+- If the relay cannot bind to `http://+:8787/`, run the one-time URL ACL setup from the run instructions. The scheduled task itself should still use `Limited` unless elevated startup is explicitly needed.
 - Make sure the relay machine does not sleep.
 - Make sure the target device has Wake-on-LAN enabled in its firmware, operating system, and network adapter settings where applicable.
 - Some networks block directed broadcast or WOL across Wi-Fi. A wired relay and wired target are the most reliable setup.

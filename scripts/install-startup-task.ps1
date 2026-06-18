@@ -17,10 +17,11 @@ $action = New-ScheduledTaskAction `
     -Argument "-ExecutionPolicy Bypass -File `"$resolvedScriptPath`""
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn
+# ScheduledTasks uses RunLevel enum values Limited or Highest; Limited is the normal current-user task.
 $principal = New-ScheduledTaskPrincipal `
     -UserId $currentUser `
     -LogonType Interactive `
-    -RunLevel LeastPrivilege
+    -RunLevel Limited
 
 $description = "Runs tailscale-wol-relay at user logon."
 
@@ -34,4 +35,5 @@ Register-ScheduledTask `
 
 Write-Host "Scheduled task '$TaskName' installed for $currentUser."
 Write-Host "Action: powershell.exe -ExecutionPolicy Bypass -File `"$resolvedScriptPath`""
+Write-Host "Run level: Limited"
 Write-Host "Admin is usually not required for this current-user logon task."
