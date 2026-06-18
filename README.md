@@ -29,6 +29,15 @@ tailscale-wol-relay/
     uninstall-startup-task.ps1
 ```
 
+## Prerequisites
+
+Before setup:
+
+- The Windows relay machine should be powered on and connected to the same LAN as the PC you want to wake.
+- The target PC should be awake at least once during setup so you can find its wired Ethernet MAC address.
+- After setup, the relay machine should stay awake whenever you want remote wake access.
+- The target PC must have Wake-on-LAN enabled in BIOS/UEFI and Windows network adapter settings.
+
 ## Setup
 
 Run these commands from the repo root on the always-on Windows relay machine.
