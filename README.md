@@ -12,7 +12,7 @@ Remote device -> Tailscale -> always-on Windows relay -> LAN Wake-on-LAN broadca
 
 Wake-on-LAN magic packets are usually delivered by local Ethernet broadcast or local subnet traffic. Tailscale gives you secure connectivity to a machine, but it does not turn remote HTTP traffic into LAN broadcast packets for a sleeping device. This relay bridges that gap: Tailscale reaches the always-on Windows machine, then the relay sends WOL packets on the local LAN.
 
-The relay does not assume a `/24` subnet. It detects active private LAN IPv4 interfaces and calculates the correct broadcast address from the local IP and prefix length. For example, `192.168.4.250/22` correctly broadcasts to `192.168.7.255`, not `192.168.4.255`.
+The relay does not assume a `/24` subnet. It detects active private LAN IPv4 interfaces and calculates the correct broadcast address from the local IP and prefix length. For example, a relay at `10.10.4.250/22` correctly broadcasts to `10.10.7.255`, not `10.10.4.255`.
 
 ## Files
 
