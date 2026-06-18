@@ -33,10 +33,12 @@ tailscale-wol-relay/
 
 Before setup:
 
-- The Windows relay machine should be powered on and connected to the same LAN as the PC you want to wake.
-- The target PC should be awake at least once during setup so you can find its wired Ethernet MAC address.
+- The Windows relay machine should be powered on and connected to the same LAN as the target device you want to wake.
+- The target device should be awake at least once during setup so you can find its network adapter MAC address.
 - After setup, the relay machine should stay awake whenever you want remote wake access.
-- The target PC must have Wake-on-LAN enabled in BIOS/UEFI and Windows network adapter settings.
+- The target device must have Wake-on-LAN enabled in its firmware, operating system, and network adapter settings where applicable.
+
+> Tested target: Windows desktop PC with wired Ethernet. The relay sends standard Wake-on-LAN packets and may work with other Wake-on-LAN-capable devices, but wake behavior depends on the target hardware, network adapter, operating system, and sleep/power state.
 
 ## Setup
 
@@ -59,8 +61,8 @@ WAKE_KEY=change-me
 
 Config values:
 
-- `TARGET_MAC`: Required for `/wake`. Use the sleeping PC's wired Ethernet MAC address.
-- `TARGET_IP`: Optional last-known LAN IP of the sleeping PC. Do not use the Tailscale IP.
+- `TARGET_MAC`: Required for `/wake`. Use the target device's network adapter MAC address.
+- `TARGET_IP`: Optional last-known LAN IP of the target device. Do not use the Tailscale IP.
 - `MANUAL_BROADCAST_ADDRESS`: Optional fallback broadcast address. Leave blank unless you need to force one.
 - `HTTP_PORT`: HTTP listener port. Defaults to `8787`.
 - `WAKE_KEY`: Optional shared key for `/wake`. If blank, `/wake` is unauthenticated.
@@ -141,12 +143,12 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\uninstall-startup-task.ps
 
 ## Troubleshooting
 
-- Confirm `TARGET_MAC` is the target PC's wired Ethernet MAC address, not Wi-Fi, Bluetooth, or a virtual adapter.
-- Do not use the Tailscale IP for `TARGET_IP`; it must be the PC's LAN IP if you set it.
+- Confirm `TARGET_MAC` is the target device's network adapter MAC address, not Wi-Fi, Bluetooth, or a virtual adapter.
+- Do not use the Tailscale IP for `TARGET_IP`; it must be the target device's LAN IP if you set it.
 - Do not assume `x.x.x.255` is the correct broadcast address. `/status` shows the calculated broadcast for each detected LAN interface.
 - If `/status` works over Tailscale but `/wake` fails, the relay HTTP path is working and the remaining issue is local WOL delivery.
 - Make sure the relay machine does not sleep.
-- Make sure the target PC has Wake-on-LAN enabled in BIOS/UEFI and Windows NIC settings.
+- Make sure the target device has Wake-on-LAN enabled in its firmware, operating system, and network adapter settings where applicable.
 - Some networks block directed broadcast or WOL across Wi-Fi. A wired relay and wired target are the most reliable setup.
 - Check `wake-server.log` for send attempts and interface detection details. The wake key is never logged.
 

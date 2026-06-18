@@ -197,7 +197,7 @@ function New-MagicPacket {
     $cleanMac = $MacAddress -replace "[:-]", ""
 
     if ($cleanMac.Length -ne 12) {
-        throw "Invalid MAC address length. Set TARGET_MAC to the target PC's wired Ethernet MAC."
+        throw "Invalid MAC address length. Set TARGET_MAC to the target device's network adapter MAC."
     }
 
     if ($cleanMac -notmatch "^[0-9A-Fa-f]{12}$") {
