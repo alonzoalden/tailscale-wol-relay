@@ -1,0 +1,20 @@
+.env
+
+# Logs
+*.log
+logs/
+
+# Local temp files
+*.tmp
+*.temp
+tmp/
+temp/
+.DS_Store
+
+# PowerShell transcript and output files
+PowerShell_transcript.*
+*.transcript
+*.clixml
+*.out
+*.err
+*.output.txt
