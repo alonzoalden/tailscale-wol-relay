@@ -10,10 +10,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Get-HttpPortFromConfig {
-    param([string]$Path)
+function Get-ConfigValueFromFile {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [string]$DefaultValue = ""
+    )
 
-    $portText = "8787"
+    $result = $DefaultValue
 
     foreach ($line in Get-Content -LiteralPath $Path) {
         $trimmed = $line.Trim()
@@ -24,21 +28,27 @@ function Get-HttpPortFromConfig {
 
         $parts = $trimmed -split "=", 2
 
-        if ($parts.Count -eq 2 -and $parts[0].Trim() -eq "HTTP_PORT") {
-            $portText = $parts[1].Trim()
+        if ($parts.Count -eq 2 -and $parts[0].Trim() -eq $Name) {
+            $result = $parts[1].Trim()
 
-            if ($portText.Length -ge 2) {
-                $first = $portText.Substring(0, 1)
-                $last = $portText.Substring($portText.Length - 1, 1)
+            if ($result.Length -ge 2) {
+                $first = $result.Substring(0, 1)
+                $last = $result.Substring($result.Length - 1, 1)
 
                 if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
-                    $portText = $portText.Substring(1, $portText.Length - 2)
+                    $result = $result.Substring(1, $result.Length - 2)
                 }
             }
-
-            break
         }
     }
+
+    return [string]$result
+}
+
+function Get-HttpPortFromConfig {
+    param([string]$Path)
+
+    $portText = Get-ConfigValueFromFile -Path $Path -Name "HTTP_PORT" -DefaultValue "8787"
 
     $port = 0
     if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
@@ -46,6 +56,43 @@ function Get-HttpPortFromConfig {
     }
 
     return $port
+}
+
+function Assert-OptionalIPv4Config {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    $value = Get-ConfigValueFromFile -Path $Path -Name $Name
+
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return
+    }
+
+    $address = $null
+    if (-not [System.Net.IPAddress]::TryParse($value, [ref]$address) -or $address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw "$Name in '$Path' must be a valid IPv4 address when set."
+    }
+}
+
+function Assert-RelayConfig {
+    param([string]$Path)
+
+    $targetMac = Get-ConfigValueFromFile -Path $Path -Name "TARGET_MAC"
+    $cleanMac = $targetMac -replace "[:-]", ""
+
+    if ($cleanMac -notmatch "^[0-9A-Fa-f]{12}$") {
+        throw "TARGET_MAC in '$Path' must use the format AA:BB:CC:DD:EE:FF."
+    }
+
+    if ([string]::Equals($cleanMac, "AABBCCDDEEFF", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "TARGET_MAC in '$Path' still contains the example value. Replace it with the target device's wired network adapter MAC."
+    }
+
+    [void](Get-HttpPortFromConfig -Path $Path)
+    Assert-OptionalIPv4Config -Path $Path -Name "TARGET_IP"
+    Assert-OptionalIPv4Config -Path $Path -Name "MANUAL_BROADCAST_ADDRESS"
 }
 
 function Get-TailscaleCliPath {
@@ -84,7 +131,10 @@ function Enable-TailscaleUnattendedMode {
 
     if ($tailscaleService.Status -ne "Running") {
         Start-Service -Name "Tailscale"
-        $tailscaleService.WaitForStatus("Running", (New-TimeSpan -Seconds 15))
+        $tailscaleService.WaitForStatus(
+            [System.ServiceProcess.ServiceControllerStatus]::Running,
+            (New-TimeSpan -Seconds 15)
+        )
     }
 
     $tailscaleCli = Get-TailscaleCliPath
@@ -114,6 +164,83 @@ function Enable-TailscaleUnattendedMode {
     return [string]$tailscaleIp
 }
 
+function Wait-RelayHealth {
+    param(
+        [string]$Url,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = "No response received."
+
+    do {
+        try {
+            return Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 3
+        }
+        catch {
+            $lastError = $_.Exception.Message
+        }
+
+        if ([DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Seconds 1
+        }
+    }
+    while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Relay health check did not succeed within $TimeoutSeconds seconds. Last request error: $lastError"
+}
+
+function Stop-ExistingRelayTask {
+    param(
+        [string]$Name,
+        [int]$TimeoutSeconds = 15
+    )
+
+    $task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+
+    if ($null -eq $task -or $task.State -notin @("Running", "Queued")) {
+        return
+    }
+
+    Write-Host "Stopping the existing '$Name' task..."
+    Stop-ScheduledTask -TaskName $Name
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+
+    do {
+        Start-Sleep -Milliseconds 250
+        $task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+
+        if ($null -eq $task -or $task.State -notin @("Running", "Queued")) {
+            return
+        }
+    }
+    while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "The existing '$Name' task did not stop within $TimeoutSeconds seconds."
+}
+
+function Wait-TcpPortAvailable {
+    param(
+        [int]$Port,
+        [int]$TimeoutSeconds = 10
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+
+    do {
+        $listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
+
+        if ($null -eq $listener) {
+            return
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+    while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "TCP port $Port is already in use. Stop the existing relay or other listener, or restart Windows, then run this installer again."
+}
+
 if (-not (Test-Path -LiteralPath $ScriptPath)) {
     throw "Could not find wake-server.ps1 at: $ScriptPath"
 }
@@ -126,15 +253,11 @@ if (-not (Test-Path -LiteralPath $sourceConfigPath)) {
     throw "Could not find .env at: $sourceConfigPath. Copy .env.example to .env and configure it before installing."
 }
 
+Assert-RelayConfig -Path $sourceConfigPath
 $httpPort = Get-HttpPortFromConfig -Path $sourceConfigPath
 $tailscaleIp = Enable-TailscaleUnattendedMode
-$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-
-if ($null -ne $existingTask -and $existingTask.State -eq "Running") {
-    Write-Host "Stopping the existing '$TaskName' task..."
-    Stop-ScheduledTask -TaskName $TaskName
-    Start-Sleep -Seconds 1
-}
+Stop-ExistingRelayTask -Name $TaskName
+Wait-TcpPortAvailable -Port $httpPort
 
 $programDataPath = [System.IO.Path]::GetFullPath($env:ProgramData).TrimEnd("\")
 $fullInstallPath = [System.IO.Path]::GetFullPath($InstallDirectory).TrimEnd("\")
@@ -242,21 +365,22 @@ New-NetFirewallRule `
     -Profile Any | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
-Start-Sleep -Seconds 2
-
-$task = Get-ScheduledTask -TaskName $TaskName
-$taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName
-$statusUrl = "http://localhost:$httpPort/status"
-
-if ($task.State -ne "Running") {
-    throw "The task was installed but is not running. Last result: $($taskInfo.LastTaskResult). Check '$resolvedInstallDirectory\wake-server.log' and whether another process is using TCP port $httpPort."
-}
+$healthUrl = "http://localhost:$httpPort/health"
 
 try {
-    $statusResponse = Invoke-WebRequest -UseBasicParsing -Uri $statusUrl -TimeoutSec 5
+    $healthResponse = Wait-RelayHealth -Url $healthUrl -TimeoutSeconds 30
 }
 catch {
-    throw "The task is running, but its health check failed: $($_.Exception.Message). Check '$resolvedInstallDirectory\wake-server.log' and Task Scheduler history."
+    $task = Get-ScheduledTask -TaskName $TaskName
+    $taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName
+    $logPath = Join-Path $resolvedInstallDirectory "wake-server.log"
+    $recentLog = "No relay log was created."
+
+    if (Test-Path -LiteralPath $logPath) {
+        $recentLog = (Get-Content -LiteralPath $logPath -Tail 10) -join " | "
+    }
+
+    throw "$($_.Exception.Message) Task state: $($task.State); last result: $($taskInfo.LastTaskResult). Recent log: $recentLog"
 }
 
 Write-Host "Scheduled task '$TaskName' installed and started successfully."
@@ -265,5 +389,5 @@ Write-Host "Runtime: unlimited; restarts after failures"
 Write-Host "Tailscale: unattended, Automatic service, IPv4 $tailscaleIp"
 Write-Host "Installed files: $resolvedInstallDirectory"
 Write-Host "Firewall: TCP $httpPort from Tailscale addresses (100.64.0.0/10)"
-Write-Host "Health check: HTTP $($statusResponse.StatusCode) from $statusUrl"
+Write-Host "Health check: HTTP $($healthResponse.StatusCode) from $healthUrl"
 Write-Host "Re-run this installer after changing wake-server.ps1 or .env."

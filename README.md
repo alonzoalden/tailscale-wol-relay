@@ -76,6 +76,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\wake-server.ps1
 
 The server exposes:
 
+- `GET /health`
 - `GET /status`
 - `GET /wake?key=change-me`
 - `GET /stop?key=change-me` (relay computer only)
@@ -89,6 +90,7 @@ netsh http add urlacl url=http://+:8787/ user="$env:USERDOMAIN\$env:USERNAME"
 ## Test Locally
 
 ```powershell
+Invoke-WebRequest -UseBasicParsing http://localhost:8787/health
 Invoke-WebRequest -UseBasicParsing http://localhost:8787/status
 Invoke-WebRequest -UseBasicParsing "http://localhost:8787/wake?key=change-me"
 ```
@@ -132,6 +134,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 
 The installer requires a configured `.env` beside `wake-server.ps1`. It then:
 
+- validates the MAC address, optional IPv4 values, and HTTP port before changing Windows;
 - copies `wake-server.ps1` and `.env` into the protected `%ProgramData%\TailscaleWolRelay` directory;
 - sets the Windows `Tailscale` service to Automatic, enables [Tailscale's unattended mode](https://tailscale.com/docs/how-to/run-unattended), and verifies that it has a `100.x` address;
 - creates a task named `TailscaleWolRelay` that runs as `SYSTEM` at system startup, without waiting for user logon;
@@ -140,13 +143,13 @@ The installer requires a configured `.env` beside `wake-server.ps1`. It then:
 - restarts the process after failures;
 - allows the task to start and continue while the relay laptop is on battery;
 - creates the Tailscale-scoped Windows Firewall rule;
-- starts the task immediately and checks `http://localhost:8787/status`.
+- starts the task immediately and retries the lightweight `http://localhost:8787/health` check for up to 30 seconds.
 
 Running a `SYSTEM` task directly from a user-writable checkout would create a local privilege-escalation path. The protected deployed copy avoids that problem. Re-run the installer after changing `wake-server.ps1`, `.env`, or `HTTP_PORT`; it safely replaces the deployed copy, task definition, and firewall rule.
 
 The relay computer itself must remain awake. Task Scheduler can restart the process, but it cannot serve requests while Windows is sleeping or hibernating. Configure the relay laptop's plugged-in sleep settings accordingly.
 
-Uninstall the task:
+Uninstall the task from PowerShell running as Administrator:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\uninstall-startup-task.ps1
@@ -158,9 +161,15 @@ By default, uninstalling preserves the deployed `.env` and logs. Delete those as
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\uninstall-startup-task.ps1 -RemoveData
 ```
 
+Uninstalling the relay intentionally leaves Tailscale's system-wide unattended setting enabled. To return Tailscale to user-login mode, run this separately after uninstalling:
+
+```powershell
+tailscale set --unattended=false
+```
+
 ## Check the Installed Relay
 
-Run these commands from PowerShell on the relay computer:
+Run these commands from PowerShell running as Administrator on the relay computer:
 
 ```powershell
 Get-ScheduledTask -TaskName TailscaleWolRelay |
@@ -175,11 +184,12 @@ Get-Service -Name Tailscale |
 tailscale status
 tailscale ip -4
 Get-NetTCPConnection -State Listen -LocalPort 8787
+Invoke-WebRequest -UseBasicParsing http://localhost:8787/health
 Invoke-WebRequest -UseBasicParsing http://localhost:8787/status
 Get-Content "$env:ProgramData\TailscaleWolRelay\wake-server.log" -Tail 30
 ```
 
-The expected task and Tailscale service states are both `Running`, `tailscale ip -4` should return the relay's `100.x` address, the TCP listener should be present, and `/status` should return `Wake relay is running.`
+The expected task and Tailscale service states are both `Running`, `tailscale ip -4` should return the relay's `100.x` address, the TCP listener should be present, `/health` should return `OK`, and `/status` should return `Wake relay is running.` The health endpoint does not enumerate network interfaces, so it remains fast while Windows networking is still warming up after startup.
 
 ## Troubleshooting
 

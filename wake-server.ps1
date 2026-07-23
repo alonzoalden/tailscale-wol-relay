@@ -409,6 +409,7 @@ try {
     $listener.Start()
 
     Write-RelayLog "Wake relay listening on $ListenPrefix"
+    Write-RelayLog "Health URL: http://localhost:$HttpPort/health"
     Write-RelayLog "Status URL: http://localhost:$HttpPort/status"
     Write-RelayLog "Wake URL: http://localhost:$HttpPort/wake"
     Write-RelayLog "Stop URL: http://localhost:$HttpPort/stop"
@@ -435,7 +436,11 @@ try {
         }
 
         try {
-            if ($path -eq "/wake") {
+            if ($path -eq "/health") {
+                $response.StatusCode = 200
+                $body = "OK"
+            }
+            elseif ($path -eq "/wake") {
                 if (-not (Test-RequestAuthorized -Request $request)) {
                     $response.StatusCode = 401
                     $body = "Unauthorized."
@@ -470,7 +475,7 @@ try {
             }
             else {
                 $response.StatusCode = 404
-                $body = "Use /wake, /status, or /stop"
+                $body = "Use /health, /wake, /status, or /stop"
             }
         }
         catch {
@@ -479,12 +484,32 @@ try {
             Write-RelayLog "ERROR: $($_.Exception.Message)"
         }
 
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-        $response.ContentType = "text/plain"
-        $response.ContentLength64 = $bytes.Length
-        $response.OutputStream.Write($bytes, 0, $bytes.Length)
-        $response.OutputStream.Close()
+        if (-not $body.EndsWith("`n")) {
+            $body += "`r`n"
+        }
+
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+            $response.ContentType = "text/plain"
+            $response.ContentLength64 = $bytes.Length
+            $response.OutputStream.Write($bytes, 0, $bytes.Length)
+        }
+        catch {
+            Write-RelayLog "ERROR sending HTTP response: $($_.Exception.Message)"
+        }
+        finally {
+            try {
+                $response.OutputStream.Close()
+            }
+            catch {
+                Write-RelayLog "ERROR closing HTTP response: $($_.Exception.Message)"
+            }
+        }
     }
+}
+catch {
+    Write-RelayLog "FATAL: $($_.Exception.Message)"
+    throw
 }
 finally {
     if ($listener.IsListening) {

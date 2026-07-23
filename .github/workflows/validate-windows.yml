@@ -1,0 +1,141 @@
+name: Validate Windows relay
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse PowerShell scripts
+        shell: powershell
+        run: |
+          $parseFailed = $false
+
+          Get-ChildItem -Path . -Recurse -Filter *.ps1 | ForEach-Object {
+              $tokens = $null
+              $parseErrors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$tokens,
+                  [ref]$parseErrors
+              )
+
+              if ($parseErrors.Count -gt 0) {
+                  $parseFailed = $true
+                  Write-Host "Parse errors in $($_.FullName):"
+                  $parseErrors | ForEach-Object { Write-Host "  $($_.Message)" }
+              }
+          }
+
+          if ($parseFailed) {
+              throw "PowerShell syntax validation failed."
+          }
+
+      - name: Smoke-test HTTP endpoints
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $port = 18787
+          $serverPath = Join-Path $PWD "wake-server.ps1"
+          $configPath = Join-Path $PWD ".env"
+          $testKey = "ci-test-key"
+          $serverProcess = $null
+          $urlPrefix = "http://+:$port/"
+          $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+          @(
+              "TARGET_MAC=02:00:00:00:00:01",
+              "TARGET_IP=",
+              "MANUAL_BROADCAST_ADDRESS=",
+              "HTTP_PORT=$port",
+              "WAKE_KEY=$testKey"
+          ) | Set-Content -LiteralPath $configPath
+
+          try {
+              & netsh.exe http add urlacl "url=$urlPrefix" "user=$currentUser" | Out-Host
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Could not reserve $urlPrefix for the Windows test user."
+              }
+
+              $serverProcess = Start-Process `
+                  -FilePath "powershell.exe" `
+                  -ArgumentList @(
+                      "-NoLogo",
+                      "-NoProfile",
+                      "-NonInteractive",
+                      "-ExecutionPolicy", "Bypass",
+                      "-File", "`"$serverPath`""
+                  ) `
+                  -PassThru
+
+              $healthUrl = "http://localhost:$port/health"
+              $deadline = [DateTime]::UtcNow.AddSeconds(30)
+              $healthResponse = $null
+
+              do {
+                  try {
+                      $healthResponse = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 3
+                  }
+                  catch {
+                      Start-Sleep -Seconds 1
+                  }
+              }
+              while ($null -eq $healthResponse -and [DateTime]::UtcNow -lt $deadline)
+
+              if ($null -eq $healthResponse -or $healthResponse.StatusCode -ne 200 -or $healthResponse.Content.Trim() -ne "OK") {
+                  throw "The /health endpoint did not become ready."
+              }
+
+              $statusResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$port/status" -TimeoutSec 30
+              if ($statusResponse.StatusCode -ne 200 -or $statusResponse.Content -notmatch "Wake relay is running\.") {
+                  throw "The /status endpoint returned an unexpected response."
+              }
+
+              foreach ($testCase in @(
+                  @{ Uri = "http://localhost:$port/wake?key=wrong"; Expected = 401 },
+                  @{ Uri = "http://localhost:$port/not-a-route"; Expected = 404 },
+                  @{ Uri = "http://localhost:$port/stop?key=wrong"; Expected = 401 }
+              )) {
+                  try {
+                      [void](Invoke-WebRequest -UseBasicParsing -Uri $testCase.Uri -TimeoutSec 5)
+                      throw "Expected HTTP $($testCase.Expected) from $($testCase.Uri)."
+                  }
+                  catch {
+                      if ($null -eq $_.Exception.Response) {
+                          throw
+                      }
+
+                      $statusCode = [int]$_.Exception.Response.StatusCode
+                      if ($statusCode -ne $testCase.Expected) {
+                          throw "Expected HTTP $($testCase.Expected) from $($testCase.Uri), received $statusCode."
+                      }
+                  }
+              }
+
+              $stopResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$port/stop?key=$testKey" -TimeoutSec 5
+              if ($stopResponse.StatusCode -ne 200) {
+                  throw "The authenticated local /stop endpoint failed."
+              }
+
+              $serverProcess.WaitForExit(10000)
+              if (-not $serverProcess.HasExited) {
+                  throw "The relay did not stop after the authenticated local /stop request."
+              }
+          }
+          finally {
+              if ($null -ne $serverProcess -and -not $serverProcess.HasExited) {
+                  Stop-Process -Id $serverProcess.Id -Force
+              }
+
+              & netsh.exe http delete urlacl "url=$urlPrefix" | Out-Host
+          }
