@@ -310,7 +310,7 @@ function Send-WakePackets {
     return $results
 }
 
-function Test-WakeRequestAuthorized {
+function Test-RequestAuthorized {
     param([System.Net.HttpListenerRequest]$Request)
 
     if ([string]::IsNullOrWhiteSpace($WakeKey)) {
@@ -324,6 +324,16 @@ function Test-WakeRequestAuthorized {
     }
 
     return [string]::Equals($providedKey, $WakeKey, [System.StringComparison]::Ordinal)
+}
+
+function Test-IsLoopbackRequest {
+    param([System.Net.HttpListenerRequest]$Request)
+
+    if ($null -eq $Request.RemoteEndPoint -or $null -eq $Request.RemoteEndPoint.Address) {
+        return $false
+    }
+
+    return [System.Net.IPAddress]::IsLoopback($Request.RemoteEndPoint.Address)
 }
 
 function Get-StatusBody {
@@ -426,7 +436,7 @@ try {
 
         try {
             if ($path -eq "/wake") {
-                if (-not (Test-WakeRequestAuthorized -Request $request)) {
+                if (-not (Test-RequestAuthorized -Request $request)) {
                     $response.StatusCode = 401
                     $body = "Unauthorized."
                     Write-RelayLog "Rejected unauthorized /wake request."
@@ -442,9 +452,21 @@ try {
                 $body = Get-StatusBody
             }
             elseif ($path -eq "/stop") {
-                $response.StatusCode = 200
-                $body = "Wake relay stopping."
-                $stopRequested = $true
+                if (-not (Test-IsLoopbackRequest -Request $request)) {
+                    $response.StatusCode = 403
+                    $body = "The stop endpoint is available only from the relay computer."
+                    Write-RelayLog "Rejected non-local /stop request."
+                }
+                elseif (-not (Test-RequestAuthorized -Request $request)) {
+                    $response.StatusCode = 401
+                    $body = "Unauthorized."
+                    Write-RelayLog "Rejected unauthorized /stop request."
+                }
+                else {
+                    $response.StatusCode = 200
+                    $body = "Wake relay stopping."
+                    $stopRequested = $true
+                }
             }
             else {
                 $response.StatusCode = 404
