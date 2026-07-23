@@ -66,7 +66,7 @@ Config values:
 - `TARGET_IP`: Optional last-known LAN IP of the target device. Do not use the Tailscale IP.
 - `MANUAL_BROADCAST_ADDRESS`: Optional fallback broadcast address. Leave blank unless you need to force one.
 - `HTTP_PORT`: HTTP listener port. Defaults to `8787`.
-- `WAKE_KEY`: Optional shared key for `/wake`. If blank, `/wake` is unauthenticated.
+- `WAKE_KEY`: Optional shared key for `/wake`. Replace `change-me` before installation; the installer rejects that example value. If blank, `/wake` is unauthenticated.
 
 ## Run the Server
 

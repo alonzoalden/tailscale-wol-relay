@@ -90,6 +90,11 @@ function Assert-RelayConfig {
         throw "TARGET_MAC in '$Path' still contains the example value. Replace it with the target device's wired network adapter MAC."
     }
 
+    $wakeKey = Get-ConfigValueFromFile -Path $Path -Name "WAKE_KEY"
+    if ([string]::Equals($wakeKey, "change-me", [System.StringComparison]::Ordinal)) {
+        throw "WAKE_KEY in '$Path' still contains the example value. Replace it with a private key before installing the relay."
+    }
+
     [void](Get-HttpPortFromConfig -Path $Path)
     Assert-OptionalIPv4Config -Path $Path -Name "TARGET_IP"
     Assert-OptionalIPv4Config -Path $Path -Name "MANUAL_BROADCAST_ADDRESS"
